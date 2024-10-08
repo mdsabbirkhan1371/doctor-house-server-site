@@ -29,9 +29,38 @@ async function run() {
     const reviewCollection = client.db('Doctor-House').collection('Reviews');
     const serviceCollection = client.db('Doctor-House').collection('Services');
     const bookingCollection = client.db('Doctor-House').collection('Bookings');
+    const userCollection = client.db('Doctor-House').collection('Users');
+
+    // --------------users collection start----------------------
+    // make user admin
+    app.patch('/users/admin/:id', async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          role: 'admin',
+        },
+      };
+      const result = await userCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
+
+    // collect users data
+    app.post('/users', async (req, res) => {
+      const user = req.body;
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    });
+
+    // get all users
+    app.get('/users', async (req, res) => {
+      const result = await userCollection.find().toArray();
+      res.send(result);
+    });
+
+    // ------------user collection end -------------------------
 
     // booking appointment
-
     app.post('/bookings', async (req, res) => {
       const bookingInfo = req.body;
       const result = await bookingCollection.insertOne(bookingInfo);

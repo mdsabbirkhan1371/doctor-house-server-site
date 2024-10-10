@@ -1,15 +1,22 @@
+// Import dependencies
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
-var jwt = require('jsonwebtoken');
-
-const port = process.env.PORT | 5000;
-const app = express();
+const dotenv = require('dotenv');
+const jwt = require('jsonwebtoken');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-// middleware
+
+// Load environment variables
+dotenv.config();
+
+// Setup constants
+const port = process.env.PORT || 5000; // Use || instead of |
+const app = express();
+
+// Middleware setup
 app.use(cors());
 app.use(express.json());
 
+// MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.tczfz.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -21,9 +28,9 @@ const client = new MongoClient(uri, {
   },
 });
 
+// Connect to MongoDB and set up collections
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
 
     const doctorCollection = client.db('Doctor-House').collection('Doctors');
@@ -32,24 +39,16 @@ async function run() {
     const bookingCollection = client.db('Doctor-House').collection('Bookings');
     const userCollection = client.db('Doctor-House').collection('Users');
 
-    // jwt implement
-    app.post('/jwt', async (req, res) => {
-      const user = req.body;
-      console.log({ user });
-      const token = jwt.sign(
-        { email: user.email },
-        process.env.Access_Token_Secret,
-        {
-          expiresIn: '1h', // Token expires in 1 hour
-        }
-      );
+    // Send a ping to confirm a successful connection
+    await client.db('admin').command({ ping: 1 });
+    console.log('Connected to MongoDB!');
 
-      res.send({ token });
-    });
-
-    // middle ware  for verify token
+    // JWT Middleware
     const verifyToken = (req, res, next) => {
-      const token = req.headers.authorization.split(' ')[1];
+      const token = req.headers.authorization?.split(' ')[1];
+      if (!token) {
+        return res.status(401).send({ message: 'No token provided' });
+      }
       jwt.verify(token, process.env.Access_Token_Secret, (err, decoded) => {
         if (err) {
           return res.status(401).send({ message: 'Token verification failed' });
@@ -59,40 +58,47 @@ async function run() {
       });
     };
 
-    // use verify admin after verifyToken
+    // Admin verification middleware
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded.email;
       const query = { email: email };
       const user = await userCollection.findOne(query);
-      const isAdmin = user?.role === 'admin';
-      if (!isAdmin) {
-        return res.status(403).send({ message: 'forbidden access' });
+      if (user?.role !== 'admin') {
+        return res.status(403).send({ message: 'Forbidden access' });
       }
       next();
     };
 
-    // --------------users collection start----------------------
-    // admin related api
-    // make user admin first
-    app.patch(
-      '/users/admin/:id',
-      verifyToken,
-      verifyAdmin,
-      async (req, res) => {
-        const id = req.params.id;
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = {
-          $set: {
-            role: 'admin',
-          },
-        };
-        const result = await userCollection.updateOne(filter, updateDoc);
-        res.send(result);
+    // JWT route
+    app.post('/jwt', async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(
+        { email: user.email },
+        process.env.Access_Token_Secret,
+        { expiresIn: '1h' }
+      );
+      res.send({ token });
+    });
+
+    // Users collection routes
+    // Create user
+    app.post('/users', async (req, res) => {
+      const user = req.body;
+      const existingUser = await userCollection.findOne({ email: user.email });
+      if (existingUser) {
+        return res.send({ message: 'User already exists', insertedId: null });
       }
-    );
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    });
 
-    // 2nd data admin
+    // Get all users
+    app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
+      const users = await userCollection.find().toArray();
+      res.send(users);
+    });
 
+    // Get user admin status
     app.get(
       '/users/admin/:email',
       verifyToken,
@@ -103,158 +109,121 @@ async function run() {
           if (email !== req.decoded.email) {
             return res.status(401).send({ message: 'Unauthorized access' });
           }
-
           const user = await userCollection.findOne({ email });
           if (!user) return res.status(404).send({ message: 'User not found' });
-
-          const admin = user?.role === 'admin';
-          res.send({ admin });
+          const isAdmin = user?.role === 'admin';
+          res.send({ admin: isAdmin });
         } catch (error) {
           console.error('Error verifying admin:', error);
           res
             .status(500)
-            .send({ message: 'Internal Server Error', error: error.message }); // Send detailed error message for easier debugging
+            .send({ message: 'Internal Server Error', error: error.message });
         }
       }
     );
 
-    // collect users data
-    // get all users
-    app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
-      // console.log('from users', req.headers);
-      const result = await userCollection.find().toArray();
-      res.send(result);
-    });
-    app.post('/users', async (req, res) => {
-      const user = req.body;
-      const query = { email: user.email };
-      const existingUser = await userCollection.findOne(query);
-      if (existingUser) {
-        return res.send({ message: 'User is already exist', insertedId: null });
+    // Make user admin
+    app.patch(
+      '/users/admin/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const updateDoc = { $set: { role: 'admin' } };
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updateDoc
+        );
+        res.send(result);
       }
-      const result = await userCollection.insertOne(user);
-      res.send(result);
-    });
+    );
 
-    // delete user
+    // Delete user
     app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await userCollection.deleteOne(query);
+      const result = await userCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
     });
 
-    // ------------user collection end -------------------------
-
-    // booking appointment
+    // Booking routes
     app.post('/bookings', async (req, res) => {
       const bookingInfo = req.body;
       const result = await bookingCollection.insertOne(bookingInfo);
       res.send(result);
     });
 
-    // get all booking
-    // Assuming you've already set up MongoDB connection and bookingCollection
-
     app.get('/bookings', async (req, res) => {
       try {
-        // Extract email from query parameters
         const email = req.query.email;
-
         if (!email) {
           return res.status(400).send({ error: 'Email is required' });
         }
-
-        // Find bookings based on the user's email
-        const filter = { email: email };
-        const result = await bookingCollection.find(filter).toArray();
-
-        // If no bookings are found, return an empty array
-        if (result.length === 0) {
-          return res
-            .status(200)
-            .send({ message: 'No bookings found', bookings: [] });
-        }
-
-        // Return the user's bookings
-        res.status(200).send(result);
+        const bookings = await bookingCollection.find({ email }).toArray();
+        res.status(200).send(bookings);
       } catch (error) {
         console.error('Error fetching bookings:', error);
         res.status(500).send({ error: 'Failed to fetch bookings' });
       }
     });
 
-    // delete booking
-
     app.delete('/bookings/:id', async (req, res) => {
       const id = req.params.id;
-      try {
-        const filter = { _id: new ObjectId(id) };
-        const result = await bookingCollection.deleteOne(filter);
-        if (result.deletedCount === 1) {
-          res.status(200).send({ message: 'Booking deleted successfully.' });
-        } else {
-          res.status(404).send({ message: 'Booking not found.' });
-        }
-      } catch (error) {
-        res.status(500).send({ message: 'An error occurred.', error });
-      }
+      const result = await bookingCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+      res.status(result.deletedCount === 1 ? 200 : 404).send({
+        message:
+          result.deletedCount === 1
+            ? 'Booking deleted successfully.'
+            : 'Booking not found.',
+      });
     });
 
-    // ------------------doctor collection api start-------------
+    // Doctor routes
     app.get('/doctors', async (req, res) => {
-      const result = await doctorCollection.find().toArray();
-      res.send(result);
+      const doctors = await doctorCollection.find().toArray();
+      res.send(doctors);
     });
 
     app.get('/doctors/:id', async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await doctorCollection.findOne(query);
-      res.send(result);
+      const doctor = await doctorCollection.findOne({ _id: new ObjectId(id) });
+      res.send(doctor);
     });
-    // ------------------doctor collection api end-------------
 
-    // ------------------services collection api start-------------
-    // get all services
+    // Service routes
     app.get('/services', async (req, res) => {
-      const result = await serviceCollection.find().toArray();
-      res.send(result);
+      const services = await serviceCollection.find().toArray();
+      res.send(services);
     });
 
     app.get('/services/availableSlots/:id', async (req, res) => {
       const id = req.params.id;
-      console.log(id);
-      const query = { _id: new ObjectId(id) };
-      const result = await serviceCollection.findOne(query);
-      res.send(result);
+      const service = await serviceCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      res.send(service);
     });
-    // ------------------services collection api end-------------
 
-    // ------------------reviews collection api end-------------
-
+    // Review routes
     app.get('/reviews', async (req, res) => {
-      const result = await reviewCollection.find().toArray();
-      res.send(result);
+      const reviews = await reviewCollection.find().toArray();
+      res.send(reviews);
     });
-    // ------------------reviews collection api end-------------
-
-    // Send a ping to confirm a successful connection
-    await client.db('admin').command({ ping: 1 });
-    console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!'
-    );
   } finally {
-    // Ensures that the client will close when you finish/error
+    // Ensure that the client will close when you finish/error
     // await client.close();
   }
 }
+
+// Start the MongoDB connection and server
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-  res.send('Doctor server is Running Now');
+  res.send('Doctor server is running now');
 });
 
+// Start the server
 app.listen(port, () => {
-  console.log(`Doctor Server is Running at Port ${port}`);
+  console.log(`Doctor server is running at port ${port}`);
 });

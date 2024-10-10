@@ -10,8 +10,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 app.use(cors());
 app.use(express.json());
 
-const uri =
-  'mongodb+srv://mdsabbirkhan1972:XmcO1EimYs7znH8i@cluster0.tczfz.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.tczfz.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -37,64 +36,91 @@ async function run() {
     app.post('/jwt', async (req, res) => {
       const user = req.body;
       console.log({ user });
-      const token = jwt.sign(user, process.env.Access_Token_Secret, {
-        expiresIn: '1h',
-      });
+      const token = jwt.sign(
+        { email: user.email },
+        process.env.Access_Token_Secret,
+        {
+          expiresIn: '1h', // Token expires in 1 hour
+        }
+      );
+
       res.send({ token });
     });
 
     // middle ware  for verify token
     const verifyToken = (req, res, next) => {
-      console.log('inside verify token', req.headers.authorization);
-      if (!req.headers.authorization) {
-        return res.status(401).send({ message: 'forbidden access' });
-      }
       const token = req.headers.authorization.split(' ')[1];
       jwt.verify(token, process.env.Access_Token_Secret, (err, decoded) => {
         if (err) {
-          return res.status(401).send({ message: 'Forbidden access' });
+          return res.status(401).send({ message: 'Token verification failed' });
         }
         req.decoded = decoded;
-        // for running next api
         next();
       });
+    };
+
+    // use verify admin after verifyToken
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email: email };
+      const user = await userCollection.findOne(query);
+      const isAdmin = user?.role === 'admin';
+      if (!isAdmin) {
+        return res.status(403).send({ message: 'forbidden access' });
+      }
+      next();
     };
 
     // --------------users collection start----------------------
     // admin related api
     // make user admin first
-    app.patch('/users/admin/:id', async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          role: 'admin',
-        },
-      };
-      const result = await userCollection.updateOne(filter, updateDoc);
-      res.send(result);
-    });
+    app.patch(
+      '/users/admin/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            role: 'admin',
+          },
+        };
+        const result = await userCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      }
+    );
 
     // 2nd data admin
 
-    app.get('/users/admin/:email', verifyToken, async (req, res) => {
-      const email = req.params.email;
-      console.log('params email', email);
-      if (email !== req.decoded.email) {
-        return res.status(403).send({ message: 'Unauthorized access' });
+    app.get(
+      '/users/admin/:email',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const email = req.params.email;
+          if (email !== req.decoded.email) {
+            return res.status(401).send({ message: 'Unauthorized access' });
+          }
+
+          const user = await userCollection.findOne({ email });
+          if (!user) return res.status(404).send({ message: 'User not found' });
+
+          const admin = user?.role === 'admin';
+          res.send({ admin });
+        } catch (error) {
+          console.error('Error verifying admin:', error);
+          res
+            .status(500)
+            .send({ message: 'Internal Server Error', error: error.message }); // Send detailed error message for easier debugging
+        }
       }
-      const query = { email: email };
-      const user = await userCollection.findOne(query);
-      let admin = false;
-      if (user) {
-        admin = user?.role === 'admin';
-      }
-      res.send({ admin });
-    });
+    );
 
     // collect users data
     // get all users
-    app.get('/users', verifyToken, async (req, res) => {
+    app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
       // console.log('from users', req.headers);
       const result = await userCollection.find().toArray();
       res.send(result);
@@ -111,7 +137,7 @@ async function run() {
     });
 
     // delete user
-    app.delete('/users/:id', async (req, res) => {
+    app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await userCollection.deleteOne(query);
@@ -128,7 +154,7 @@ async function run() {
     });
 
     // get all booking
-    // Assuming you've already set up MongoDB connection and `bookingCollection`
+    // Assuming you've already set up MongoDB connection and bookingCollection
 
     app.get('/bookings', async (req, res) => {
       try {

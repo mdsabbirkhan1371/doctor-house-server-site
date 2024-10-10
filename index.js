@@ -75,7 +75,30 @@ async function run() {
       res.send(result);
     });
 
+    // 2nd data admin
+
+    app.get('/users/admin/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      console.log('params email', email);
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: 'Unauthorized access' });
+      }
+      const query = { email: email };
+      const user = await userCollection.findOne(query);
+      let admin = false;
+      if (user) {
+        admin = user?.role === 'admin';
+      }
+      res.send({ admin });
+    });
+
     // collect users data
+    // get all users
+    app.get('/users', verifyToken, async (req, res) => {
+      // console.log('from users', req.headers);
+      const result = await userCollection.find().toArray();
+      res.send(result);
+    });
     app.post('/users', async (req, res) => {
       const user = req.body;
       const query = { email: user.email };
@@ -84,13 +107,6 @@ async function run() {
         return res.send({ message: 'User is already exist', insertedId: null });
       }
       const result = await userCollection.insertOne(user);
-      res.send(result);
-    });
-
-    // get all users
-    app.get('/users', verifyToken, async (req, res) => {
-      console.log('from users', req.headers);
-      const result = await userCollection.find().toArray();
       res.send(result);
     });
 

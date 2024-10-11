@@ -46,10 +46,11 @@ async function run() {
     // JWT Middleware
     const verifyToken = (req, res, next) => {
       const token = req.headers.authorization?.split(' ')[1];
+      console.log('from verify token', token);
       if (!token) {
         return res.status(401).send({ message: 'No token provided' });
       }
-      jwt.verify(token, process.env.Access_Token_Secret, (err, decoded) => {
+      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
         if (err) {
           return res.status(401).send({ message: 'Token verification failed' });
         }
@@ -59,6 +60,7 @@ async function run() {
     };
 
     // Admin verification middleware
+
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded.email;
       const query = { email: email };
@@ -74,7 +76,7 @@ async function run() {
       const user = req.body;
       const token = jwt.sign(
         { email: user.email },
-        process.env.Access_Token_Secret,
+        process.env.ACCESS_TOKEN_SECRET,
         { expiresIn: '1h' }
       );
       res.send({ token });
@@ -94,33 +96,25 @@ async function run() {
 
     // Get all users
     app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
+      console.log('from user ', req.headers);
       const users = await userCollection.find().toArray();
       res.send(users);
     });
 
     // Get user admin status
-    app.get(
-      '/users/admin/:email',
-      verifyToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const email = req.params.email;
-          if (email !== req.decoded.email) {
-            return res.status(401).send({ message: 'Unauthorized access' });
-          }
-          const user = await userCollection.findOne({ email });
-          if (!user) return res.status(404).send({ message: 'User not found' });
-          const isAdmin = user?.role === 'admin';
-          res.send({ admin: isAdmin });
-        } catch (error) {
-          console.error('Error verifying admin:', error);
-          res
-            .status(500)
-            .send({ message: 'Internal Server Error', error: error.message });
-        }
+    app.get('/users/admin/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: 'forbidden access' });
       }
-    );
+      const query = { email: email };
+      const user = await userCollection.findOne(query);
+      let admin = false;
+      if (user) {
+        admin = user.role === 'admin';
+      }
+      res.send({ admin });
+    });
 
     // Make user admin
     app.patch(

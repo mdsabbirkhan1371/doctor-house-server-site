@@ -184,6 +184,21 @@ async function run() {
       const doctor = await doctorCollection.findOne({ _id: new ObjectId(id) });
       res.send(doctor);
     });
+    // add a doctor
+    app.post('/doctors', async (req, res) => {
+      const doctor = req.body;
+      const result = await doctorCollection.insertOne(doctor);
+      res.send(result);
+    });
+
+    // delete a doctor
+
+    app.delete('/doctors/:id', async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await doctorCollection.deleteOne(query);
+      res.send(result);
+    });
 
     // Service routes
     app.get('/services', async (req, res) => {
